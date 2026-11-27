@@ -119,8 +119,7 @@ ol{margin:0;padding-left:20px}ol li{margin:4px 0}
 
   <section class="card">
     <h2>Your range</h2>
-    <p class="note" style="margin-top:0">Hold your lowest comfortable note for a second, then press the button while still holding. Same for your highest.</p>
-    <div class="row"><button id="lowBtn">Save as my lowest</button><button id="highBtn">Save as my highest</button></div>
+    <p class="note" style="margin-top:0">Just sing with the mic on. Any note you hold steady (within ½ half step) for 1 second counts. Go down to your lowest comfortable note and up to your highest, and they’re saved automatically. Don’t strain: only count notes you can hold nicely.</p>
     <div class="row"><span class="mono" id="rangeLbl">Not saved yet</span></div>
     <div class="row"><button id="rangeClr">Clear range</button></div>
   </section>
@@ -302,8 +301,9 @@ function analyse(){
   const db=20*Math.log10(Math.sqrt(s/buf.length)+1e-9),now=performance.now();
   $('level').style.width=Math.max(0,Math.min(100,(db+70)/70*100))+'%';
   let f=null,state='quiet';
-  if(db>=gateDb()){let r=yinDetect(buf,ctx.sampleRate,{});if(r&&$('guard').checked)r=preferTarget(r,targetF());
+  if(db>=gateDb()){const r0=yinDetect(buf,ctx.sampleRate,{});let r=r0;if(r&&$('guard').checked)r=preferTarget(r,targetF());if(r0)rangeBuf.push({t:now,m:fToM(r0.freq)});
     if(r){state='ok';f=r.freq}else state='unclear'}
+  rangeBuf=rangeBuf.filter(p=>now-p.t<1050);autoRange(now);
   if(state==='ok'){lastClear=now;recent.push({t:now,m:fToM(f)})}
   recent=recent.filter(p=>now-p.t<130);
   if(state!=='ok'&&now-lastClear>150)recent=[];
@@ -312,7 +312,6 @@ function analyse(){
     if(now-lastGood>120)zoneStart=null;
     setIdle(state==='quiet'?'listening…':'can’t read it — hold a clear “ooh”');trimTrace(now);return}
   const m=median(recent.map(p=>p.m)),freq=mToF(m),cents=(m-target)*100;
-  rangeBuf.push({t:now,m});rangeBuf=rangeBuf.filter(p=>now-p.t<1000);
   trace.push({t:now,c:cents});trimTrace(now);
   $('yName').textContent=nName(Math.round(m));$('yHz').textContent=freq.toFixed(1)+' Hz';
   const hsv=cents/100,nd=$('needle'),nf=$('needleF');nd.classList.add('show');nf.classList.add('show');
@@ -356,10 +355,14 @@ function drawTrace(){
 function showRange(){const f=m=>m==null?'–':nName(m)+' ('+Math.round(mToF(m))+' Hz)';
   $('rangeLbl').textContent=range.low==null&&range.high==null?'Not saved yet':
   'Lowest '+f(range.low)+' · Highest '+f(range.high)+(range.low!=null&&range.high!=null?' · '+(range.high-range.low)+' half steps':'')}
-function grab(which){const pts=rangeBuf.filter(p=>performance.now()-p.t<1000);
-  if(pts.length<8){$('rangeLbl').textContent='Hold the note while you press the button (mic must be on).';return}
-  range[which]=Math.round(median(pts.map(p=>p.m)));store.set('range',range);showRange()}
-$('lowBtn').onclick=()=>grab('low');$('highBtn').onclick=()=>grab('high');
+let flashUntil=0;
+function autoRange(now){const b=rangeBuf;if(b.length<10||now-b[0].t<950||now-b[b.length-1].t>120)return;
+  for(let i=1;i<b.length;i++)if(b[i].t-b[i-1].t>200)return;
+  const med=median(b.map(p=>p.m));if(b.some(p=>Math.abs(p.m-med)>0.5))return;
+  const n=Math.round(med);let msg='';
+  if(range.low==null||n<range.low){range.low=n;msg='New lowest: '+nName(n)}
+  if(range.high==null||n>range.high){range.high=n;msg=(msg?msg+' · ':'')+'New highest: '+nName(n)}
+  if(msg){store.set('range',range);showRange();$('rangeLbl').textContent=msg+'  ✓';flashUntil=now+1500;setTimeout(()=>{if(performance.now()>=flashUntil)showRange()},1600)}}
 $('rangeClr').onclick=()=>{range={low:null,high:null};store.set('range',range);showRange()};showRange();
 
 // math check
