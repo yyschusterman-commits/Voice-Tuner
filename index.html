@@ -94,7 +94,7 @@ button.use.on{background:var(--good);border-color:var(--good);color:#fff}
 .ctl label{display:flex;flex-direction:column;font-size:13px;color:var(--mute);margin:6px 0}
 .ctl label.chk{flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:center;color:var(--ink);font-size:15px}
 input[type=range]{width:100%;accent-color:var(--blue);min-height:32px}
-.part{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1.3fr) minmax(0,.9fr) minmax(0,.9fr) minmax(0,1fr);gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.part{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,.8fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.9fr);gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .part .meta{font-size:13px;color:var(--mute)}.part select{width:100%;font-size:15px;padding:0 8px}
 .vtake{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}.vtake.chosen{background:var(--okbg);border-radius:10px;padding-inline:10px}
 .vtake .acts{display:flex;flex-wrap:wrap;gap:6px}.vtake .acts button{min-height:40px;font-size:15px;padding:0 10px}
@@ -215,7 +215,7 @@ details summary{cursor:pointer;font-weight:600;min-height:32px}
   </div>
   <div class="card hidden" id="partsCard">
     <h2>Parts</h2>
-    <p class="note" style="margin-top:0">Each part of the MIDI file plays with one of your sounds. Set the lead melody to “You sing it” and record it below. Turn off parts that double the melody if it gets crowded. Changes apply from the next loop.</p>
+    <p class="note" style="margin-top:0">Each part of the MIDI file plays with one of your sounds. Octave picks which of your notes it uses; “Pitch up” plays them higher than you sang, like a synth, for parts that were too high to sing. Set the lead melody to “You sing it” and record it below. Turn off parts that double the melody if it gets crowded. Changes apply from the next loop.</p>
     <div id="parts"></div>
   </div>
   <div class="card" id="vocCard">
@@ -406,14 +406,15 @@ function midiPlan(parsed,title,P){
   return{format:'pitchhold-midi-1',kind:'midi',id:slug(title)+'-midi',title,trimmed:trim,artist:'MIDI file',level:'midi',bpm:parsed.bpm,beatsPerBar:parsed.beatsPerBar,
     parts,length:parsed.length-trim,key:'',notes:'',sections:{},order:[]};
 }
+function autoFx(pt,s,P){if(s.sound!=='ooh'||!(s.oct<0))return 0;const ms=pt.notes.map(n=>n[2]).sort((a,b)=>a-b),pm=ms[ms.length>>1];return pm>P+11?Math.min(1,-s.oct):0}
 function buildMidiSong(plan,o){
   const f=plan.bpm/o.bpm,L=o.P-12,H=o.P+11,ev=[],pans=[-0.35,0.35,-0.2,0.2,-0.5,0.5,0];let end=0;
   const fold=n=>{while(n<L)n+=12;while(n>H)n-=12;return n};
   plan.parts.forEach((pt,pi)=>{const s=pt.set||{};let snd=s.sound;if(snd==='sing')snd=o.guide?'guide':'off';if(!snd||snd==='off')return;
-    const pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25}[snd]*((s.vol??70)/100);
+    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25}[snd]*((s.vol??70)/100);
     for(const n of pt.notes){const start=n[0]*f,dur=Math.max(0.06,n[1]*f),vel=Math.min(1.2,(n[3]||100)/105);end=Math.max(end,start+dur);
       if(snd==='kit'){const k=drumFor(pt,n[2]);ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,pi})}
-      else ev.push({type:snd==='guide'?'organ':snd,midi:fold(n[2]+(o.transpose||0)+12*(s.oct||0)),start,dur,kind:s.style==='short'?'short':'pad',pan,vol:base*vel,pi})}});
+      else ev.push({type:snd==='guide'?'organ':snd,midi:fold(n[2]+(o.transpose||0)+12*(s.oct||0)),start,dur,kind:s.style==='short'?'short':'pad',pan,vol:base*vel*(fx?1.25:1),fx,pi})}});
   return{events:ev,chart:[],segs:[],total:end+0.6,spb:60/o.bpm,beats:Math.round(end*o.bpm/60)};
 }
 const sid=(type,midi)=>midi==null?type:type+':'+midi;
@@ -825,12 +826,12 @@ const opts=()=>{const p=curPlan();return{P:S.P,transpose:S.tr[p.id]||0,bpm:S.bpm
   fill:S.fill,shift:S.shift,reverb:S.reverb/100*0.6,atAll:S.atAll,atChords:S.atChords,atBass:S.atBass,guide:false}};
 function prepare(plan,o){const song=buildSong(plan,o);for(const e of song.events)e.src=sourceFor(e.type,e.midi,o);song.events.sort((a,b)=>a.start-b.start);return song}
 function scheduleEvent(ac,out,t0,e,o,r){const src=e.src;if(!src)return null;
-  const s=ac.createBufferSource(),g=ac.createGain(),pn=ac.createStereoPanner();s.buffer=src.buf;s.playbackRate.value=2**((src.cents||0)/1200);pn.pan.value=e.pan;
+  const s=ac.createBufferSource(),g=ac.createGain(),pn=ac.createStereoPanner();s.buffer=src.buf;const rate=2**(((src.cents||0)+(e.fx||0)*1200)/1200);s.playbackRate.value=rate;pn.pan.value=e.pan;
   const vol=(e.vol!=null?e.vol:{chords:o.chordVol,bass:o.bassVol,drums:o.drumVol}[e.part])*src.norm,st=Math.max(t0+e.start,ac.currentTime+0.01);
   if(e.kind==='hit'){g.gain.value=vol*(e.vol!=null?1:e.type==='hat'?0.55:1);s.start(st)}
   else if(e.kind==='short'){g.gain.setValueAtTime(0,st);g.gain.linearRampToValueAtTime(vol,st+0.015);g.gain.setTargetAtTime(0,st+0.08,e.dur/3);s.start(st,0.05+r()*0.3);s.stop(st+e.dur+0.4)}
   else{const end=t0+e.start+e.dur,att=Math.min(0.08,Math.max(0.01,e.dur*0.3));g.gain.setValueAtTime(0,st);g.gain.linearRampToValueAtTime(vol,st+att);g.gain.setValueAtTime(vol,Math.max(st+att+0.005,end-0.02));g.gain.linearRampToValueAtTime(0,Math.max(st+att+0.01,end+0.12));
-    s.start(st,Math.max(0,Math.min(2.5,src.buf.duration-e.dur*1.06-0.5))*r());s.stop(Math.max(st+att+0.03,end+0.18))}
+    s.start(st,Math.max(0,Math.min(2.5,src.buf.duration-e.dur*rate*1.06-0.5))*r());s.stop(Math.max(st+att+0.03,end+0.18))}
   s.connect(g).connect(pn).connect(out);return s}
 function schedulePass(ac,out,t0,plan,o,seed){const song=prepare(plan,o),r=rng(seed||1),nodes=[];
   for(const e of song.events){const n=scheduleEvent(ac,out,t0,e,o,r);if(n)nodes.push(n)}return Object.assign(song,{nodes,t0})}
@@ -911,6 +912,7 @@ function renderParts(p){$('parts').innerHTML=p.parts.map((pt,i)=>{const s=pt.set
   <select data-k="sound" aria-label="Sound">${SOUNDS.map(([v,l])=>`<option value="${v}"${s.sound===v?' selected':''}>${l}</option>`).join('')}</select>
   <select data-k="style" aria-label="Style"${s.sound==='kit'?' disabled':''}><option value="hold"${s.style!=='short'?' selected':''}>Held</option><option value="short"${s.style==='short'?' selected':''}>Short</option></select>
   <select data-k="oct" aria-label="Octave"${s.sound==='kit'?' disabled':''}>${[-3,-2,-1,0,1,2,3].map(k=>`<option value="${k}"${(s.oct||0)===k?' selected':''}>Octave ${k>0?'+':''}${k}</option>`).join('')}</select>
+  <select data-k="fx" aria-label="Pitch up effect"${s.sound==='kit'?' disabled':''}>${[0,1,2].map(k=>`<option value="${k}"${(s.fx??autoFx(pt,s,S.P))===k?' selected':''}>${k?'Pitch up +'+k+' oct':'No effect'}</option>`).join('')}</select>
   <input type="range" data-k="vol" min="0" max="100" value="${s.vol??70}" aria-label="Volume"></div>`}).join('')}
 $('parts').addEventListener('input',e=>{const el=e.target.closest('[data-k]');if(!el||el.dataset.k!=='vol')return;const p=curPlan();p.parts[+el.closest('.part').dataset.i].set.vol=+el.value;savePlans()});
 $('parts').addEventListener('change',e=>{const el=e.target.closest('[data-k]');if(!el)return;const p=curPlan(),pt=p.parts[+el.closest('.part').dataset.i],k=el.dataset.k;
