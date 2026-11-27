@@ -224,10 +224,11 @@ details summary{cursor:pointer;font-weight:600;min-height:32px}
   <div class="card" id="rollCard">
     <div class="row" style="margin-top:0;justify-content:space-between"><h2 style="margin:0">Piano roll</h2>
       <div class="row" style="margin:0"><select id="rollMode" aria-label="What to show"><option value="mine">What plays (your voice)</option><option value="orig">As written in the file</option></select>
+      <select id="keySound" aria-label="Sound the keys play"><option value="auto">Keys play: your “dum” low, “ooh” high</option><option value="ooh">Keys play: your “ooh”</option><option value="dum">Keys play: your “dum”</option></select>
       <label class="lbl row" style="margin:0">Zoom <input type="range" id="rollZoom" min="20" max="220" value="70" style="width:120px"></label></div></div>
     <div id="rollLegend" class="row"></div>
     <div class="rollWrap"><canvas id="rollKeys"></canvas><div id="rollScroll"><div id="rollInner"><canvas id="rollCv"></canvas><div id="rollHead"></div></div></div></div>
-    <p class="note" id="rollInfo">Solid = your recording · gold outline = borrowed from a nearby note · hollow = stand-in sound. Click a note for details; click a color to hide or show that part.</p>
+    <p class="note" id="rollInfo">Solid = your recording · gold outline = borrowed from a nearby note · hollow = stand-in sound. Notes slide left and play as they reach the keys. Click or drag on the keys to hear your sound for any note (the drum names play your beatbox). Click a part’s color to mute or unmute it. Click a note for details.</p>
   </div>
   <div class="card hidden" id="partsCard">
     <h2>Parts</h2>
@@ -403,7 +404,7 @@ function autoPart(pt,P){
   if(pt.drum||tom)sound='kit';
   else if(/vocal|voice|melody|lead vox|singer|^lead$/i.test(pt.name))sound='sing';
   else if((prog>=32&&prog<=39)||pm<48)sound='dum';
-  const style=sound==='kit'?'hit':durMed<0.3?'short':'hold',center=sound==='dum'?P-7:P+5;
+  const plucky=(prog>=0&&prog<=15)||(prog>=24&&prog<=31),style=sound==='kit'?'hit':durMed<0.3?'short':plucky?'fade':'hold',center=sound==='dum'?P-7:P+5;
   let oct=0;if(sound!=='kit'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=P-12&&m<=P+11)inr++}
     const sc=inr*1000-Math.abs(pm+12*k-center);if(sc>best){best=sc;oct=k}}}
   return{sound,style,oct,vol:tom?95:sound==='kit'?80:sound==='sing'?70:65};
@@ -432,7 +433,7 @@ function buildMidiSong(plan,o){
     for(const n of pt.notes){const start=n[0]*f,dur=Math.max(0.06,n[1]*f),vel=Math.min(1.2,(n[3]||100)/105);end=Math.max(end,start+dur);
       if(snd==='kit'){const k=drumFor(pt,n[2]);if(!k)continue;ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,cents:k.cents||0,stand:!!o.original,pi})}
       else if(snd==='orig')ev.push({type:'organ',midi:n[2]+(o.transpose||0),start,dur,kind:'pad',pan,vol:base*vel,orig:true,pi})
-      else ev.push({type:snd==='guide'?'organ':snd,midi:fold(n[2]+(o.transpose||0)+12*(s.oct||0)),start,dur,kind:s.style==='short'?'short':'pad',pan,vol:base*vel*(fx?1.25:1),fx,pi})}});
+      else ev.push({type:snd==='guide'?'organ':snd,midi:fold(n[2]+(o.transpose||0)+12*(s.oct||0)),start,dur,kind:s.style==='short'?'short':s.style==='fade'?'fade':'pad',pan,vol:base*vel*(fx?1.25:1),fx,pi})}});
   return{events:ev,chart:[],segs:[],total:end+0.6,spb:60/o.bpm,beats:Math.round(end*o.bpm/60)};
 }
 const sid=(type,midi)=>midi==null?type:type+':'+midi;
@@ -848,6 +849,8 @@ function scheduleEvent(ac,out,t0,e,o,r){const src=e.src;if(!src)return null;
   const s=ac.createBufferSource(),g=ac.createGain(),pn=ac.createStereoPanner();s.buffer=src.buf;const rate=2**(((src.cents||0)+(e.fx||0)*1200+(e.cents||0))/1200);s.playbackRate.value=rate;pn.pan.value=e.pan;
   const vol=(e.vol!=null?e.vol:{chords:o.chordVol,bass:o.bassVol,drums:o.drumVol}[e.part])*src.norm,st=Math.max(t0+e.start,ac.currentTime+0.01);
   if(e.kind==='hit'){g.gain.value=vol*(e.vol!=null?1:e.type==='hat'?0.55:1);s.start(st)}
+  else if(e.kind==='fade'){const end=t0+e.start+e.dur;g.gain.setValueAtTime(0,st);g.gain.linearRampToValueAtTime(vol*1.15,st+0.012);g.gain.setTargetAtTime(vol*0.08,st+0.04,0.32);
+    g.gain.setTargetAtTime(0,Math.max(st+0.05,end),0.05);s.start(st,Math.random()*0.3);s.stop(Math.max(st+0.3,end+0.3))}
   else if(e.kind==='short'){g.gain.setValueAtTime(0,st);g.gain.linearRampToValueAtTime(vol,st+0.015);g.gain.setTargetAtTime(0,st+0.08,e.dur/3);s.start(st,0.05+r()*0.3);s.stop(st+e.dur+0.4)}
   else{const end=t0+e.start+e.dur,att=Math.min(0.08,Math.max(0.01,e.dur*0.3));g.gain.setValueAtTime(0,st);g.gain.linearRampToValueAtTime(vol,st+att);g.gain.setValueAtTime(vol,Math.max(st+att+0.005,end-0.02));g.gain.linearRampToValueAtTime(0,Math.max(st+att+0.01,end+0.12));
     s.start(st,Math.max(0,Math.min(2.5,src.buf.duration-e.dur*rate*1.06-0.5))*r());s.stop(Math.max(st+att+0.03,end+0.18))}
@@ -869,11 +872,12 @@ function playSong(x){x=x||{};
     playing={song,o,t0,firstT0:t0,plan,original:!!x.original,i:0,r:rng(1),nodes:new Set(),timer:setInterval(pump,100),vocal:x.vocal?{chunks:[],start:null}:null,noLoop:!!x.vocal};
     if(!x.vocal&&!x.original&&soloPart==null){const v=vocalNode(ctx,bus.input,t0,o,plan);if(v)playing.nodes.add(v)}pump();
     if(x.original){$('checkBtn').textContent='■ Stop check';$('checkBtn').classList.add('live')}
+    {const want=x.original?'orig':'mine';if($('rollMode').value!==want||!rollGeom||rollGeom.plan!==plan){$('rollMode').value=want;drawRoll()}}
     $('playBtn').textContent='■ Stop';$('playBtn').classList.add('live');
     if(x.vocal){$('vocBtn').textContent='■ Stop recording';$('vocBtn').classList.add('live');$('vocBtn').classList.remove('primary')}
     if(!rafId)rafId=requestAnimationFrame(tick)},30)}
 function pump(){const p=playing;if(!p)return;const now=ctx.currentTime,ev=p.song.events;
-  while(p.i<ev.length&&p.t0+ev[p.i].start<now+1.5){const n=scheduleEvent(ctx,bus.input,p.t0,ev[p.i],p.o,p.r);if(n){p.nodes.add(n);n.onended=()=>p.nodes.delete(n)}p.i++}
+  while(p.i<ev.length&&p.t0+ev[p.i].start<now+1.5){const e=ev[p.i],rk=String(rollKeyOf(e));if(rollHidden.has(rk)){p.i++;continue}const n=scheduleEvent(ctx,bus.input,p.t0,e,p.o,p.r);if(n){n._rk=rk;p.nodes.add(n);n.onended=()=>p.nodes.delete(n)}p.i++}
   const end=p.t0+p.song.total;
   if(p.i>=ev.length){if(S.loop&&!p.noLoop&&now>end-1.5){p.o=Object.assign(opts(),{original:p.original,solo:soloPart});p.song=prepare(p.plan,p.o);p.t0=end;p.i=0;const v=vocalNode(ctx,bus.input,end,p.o,p.plan);if(v)p.nodes.add(v)}
     else if((!S.loop||p.noLoop)&&now>end+0.8)stopSong()}}
@@ -881,6 +885,7 @@ function stopSong(){if(!playing)return;clearInterval(playing.timer);const now=ct
   bus.master.gain.cancelScheduledValues(now);bus.master.gain.setValueAtTime(bus.master.gain.value,now);bus.master.gain.linearRampToValueAtTime(0,now+0.06);
   p.nodes.forEach(n=>{try{n.stop(now+0.08)}catch(e){}});
   if(p.vocal){$('vocBtn').textContent='● Record vocals';$('vocBtn').classList.remove('live');$('vocBtn').classList.add('primary');saveVocal(p)}
+  if(rollGeom){$('rollScroll').scrollLeft=0;$('rollHead').style.left='0px';drawKeys(new Map(),new Set())}
   $('playBtn').textContent='▶ Play';$('playBtn').classList.remove('live');$('checkBtn').textContent='▶ Check the MIDI (no voice)';$('checkBtn').classList.remove('live');for(const s of document.querySelectorAll('.bar span.now'))s.classList.remove('now')}
 function saveVocal(p){const v=p.vocal,n=v.chunks.length*HOP;if(n<SR()*1.5||v.start==null){$('vocMsg')&&($('vocMsg').textContent='That was too short to keep.');return}
   const pcm=new Float32Array(n);v.chunks.forEach((c,i)=>pcm.set(c,i*HOP));const comp=(ctx.outputLatency||ctx.baseLatency||0.02)+0.01;
@@ -903,7 +908,7 @@ $('vocVol').oninput=()=>{S.vocVol=+$('vocVol').value;save()};
 $('vocNudge').oninput=()=>{S.vocNudge=+$('vocNudge').value;$('nudgeLbl').textContent=(S.vocNudge>0?'+':'')+S.vocNudge;save()};
 $('guideChk').onchange=()=>{S.guide=$('guideChk').checked;save()};
 function tick(){rafId=0;if(!playing)return;const now=ctx.currentTime,p=playing;let idx=-1;
-  if(rollGeom){const t=Math.max(0,now-p.t0),x=t*rollGeom.pps,sc=$('rollScroll');$('rollHead').style.left=x+'px';if(x<sc.scrollLeft||x>sc.scrollLeft+sc.clientWidth*0.85)sc.scrollLeft=Math.max(0,x-sc.clientWidth*0.15)}
+  if(rollGeom&&rollGeom.plan===p.plan){const t=Math.max(0,now-p.t0),x=t*rollGeom.pps;$('rollScroll').scrollLeft=x;$('rollHead').style.left=x+'px';rollFrame(t)}
   {const t=Math.max(0,Math.min(p.song.total,now-p.t0));$('posBar').style.width=(t/p.song.total*100)+'%';$('posTxt').textContent=fmt(t)+' / '+fmt(p.song.total)+(p.vocal?' · recording your vocals':'')}
   if(now>=p.t0){const beat=(now-p.t0)/p.song.spb,sg=p.song.segs.find(s=>beat>=s.start&&beat<s.start+s.beats);if(sg)idx=sg.id}
   for(const s of document.querySelectorAll('.bar span'))s.classList.toggle('now',+s.dataset.s===idx);rafId=requestAnimationFrame(tick)}
@@ -934,7 +939,7 @@ const SOUNDS=[['ooh','Your “ooh”'],['dum','Your “dum”'],['kit','Beatbox'
 function renderParts(p){$('parts').innerHTML=p.parts.map((pt,i)=>{const s=pt.set,ms=pt.notes.map(n=>n[2]),lo=Math.min(...ms),hi=Math.max(...ms);
   return`<div class="part" data-i="${i}"><div><b>${esc(pt.name)}</b><div class="meta">${pt.notes.length} notes · ${pt.drum?'drum kit':nName(lo)+'–'+nName(hi)}${s.why&&s.sound==='off'?' · off: '+esc(s.why):''}</div></div>
   <select data-k="sound" aria-label="Sound">${SOUNDS.map(([v,l])=>`<option value="${v}"${s.sound===v?' selected':''}>${l}</option>`).join('')}</select>
-  <select data-k="style" aria-label="Style"${s.sound==='kit'?' disabled':''}><option value="hold"${s.style!=='short'?' selected':''}>Held</option><option value="short"${s.style==='short'?' selected':''}>Short</option></select>
+  <select data-k="style" aria-label="Style"${s.sound==='kit'?' disabled':''}><option value="hold"${s.style==='hold'||s.style==='hit'||!s.style?' selected':''}>Held</option><option value="fade"${s.style==='fade'?' selected':''}>Fades (like piano)</option><option value="short"${s.style==='short'?' selected':''}>Short</option></select>
   <select data-k="oct" aria-label="Octave"${s.sound==='kit'?' disabled':''}>${[-3,-2,-1,0,1,2,3].map(k=>`<option value="${k}"${(s.oct||0)===k?' selected':''}>Octave ${k>0?'+':''}${k}</option>`).join('')}</select>
   <select data-k="fx" aria-label="Pitch up effect"${s.sound==='kit'?' disabled':''}>${[0,1,2].map(k=>`<option value="${k}"${(s.fx??autoFx(pt,s,S.P))===k?' selected':''}>${k?'Pitch up +'+k+' oct':'No effect'}</option>`).join('')}</select>
   <div style="display:flex;gap:6px;align-items:center"><input type="range" data-k="vol" min="0" max="100" value="${s.vol??70}" aria-label="Volume"><button data-solo="${i}" class="${soloPart===i?'live':''}" style="min-height:36px;padding:0 10px;font-size:14px">Solo</button></div></div>`}).join('')}
@@ -977,11 +982,11 @@ function drawRoll(){
   const p=curPlan(),orig=$('rollMode').value==='orig',o=Object.assign(opts(),{original:orig&&p.kind==='midi'}),song=buildSong(p,o);
   if(!orig||p.kind!=='midi')for(const e of song.events)if(e.orig)e.orig=false;
   const keys=[...new Set(song.events.map(rollKeyOf))],col=k=>ROLLC[(typeof k==='number'?k:keys.indexOf(k))%ROLLC.length];
-  $('rollLegend').innerHTML=keys.map(k=>`<button class="chip${rollHidden.has(String(k))?' off':''}" data-k="${esc(String(k))}"><i style="background:${col(k)}"></i>${esc(rollName(p,k))}</button>`).join('');
+  $('rollLegend').innerHTML=keys.map(k=>`<button class="chip${rollHidden.has(String(k))?' off':''}" data-k="${esc(String(k))}" aria-pressed="${!rollHidden.has(String(k))}" title="Mute or unmute"><i style="background:${col(k)}"></i>${esc(rollName(p,k))}${rollHidden.has(String(k))?' (muted)':''}</button>`).join('');
   const ev=song.events.filter(e=>!rollHidden.has(String(rollKeyOf(e)))),pitched=ev.filter(e=>e.midi!=null),hits=ev.filter(e=>e.midi==null);
   const pitch=e=>e.midi+12*(e.fx||0);let lo=Math.min(...pitched.map(pitch)),hi=Math.max(...pitched.map(pitch));if(!pitched.length){lo=48;hi=72}lo-=1;hi+=1;
   const drumRows=['kick','snare','hat'].filter(t=>hits.some(e=>e.type===t)),rows=hi-lo+1,rowH=Math.max(5,Math.min(13,Math.floor(440/rows))),rulerH=18,laneH=14;
-  const pps=+$('rollZoom').value,W=Math.ceil((song.total+1)*pps),H=rulerH+rows*rowH+drumRows.length*laneH+(drumRows.length?6:0);
+  const pps=+$('rollZoom').value,padR=$('rollScroll').clientWidth||900,W=Math.ceil((song.total+1)*pps)+padR,H=rulerH+rows*rowH+drumRows.length*laneH+(drumRows.length?6:0);
   const dpr=Math.min(devicePixelRatio||1,32000/W,2),cv=$('rollCv'),kc=$('rollKeys');
   cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';kc.width=58*dpr;kc.height=H*dpr;kc.style.height=H+'px';$('rollInner').style.width=W+'px';
   const g=cv.getContext('2d'),k=kc.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);k.setTransform(dpr,0,0,dpr,0,0);
@@ -991,7 +996,9 @@ function drawRoll(){
   const barS=song.spb*(p.beatsPerBar||4);
   for(let b=0,x;(x=b*barS*pps)<W;b++){g.fillStyle='#3a4552';g.fillRect(x,rulerH,1,H-rulerH);g.fillStyle='#9fb0bf';g.font='11px system-ui';if(b%(pps<45?4:1)===0)g.fillText(String(b+1),x+3,13)}
   const how=new Map(),status=e=>{if(e.orig||e.type==='organ')return'stand';const id=sid(e.type,e.midi);if(!how.has(id)){const r=resolve(e.type,e.midi,S.shift);how.set(id,r.how==='exact'||r.how==='alt'?'mine':r.how==='shift'?'borrow':S.fill?'stand':'skip')}return how.get(id)};
-  rollGeom={pps,rects:[],plan:p};
+  rollGeom={pps,rects:[],plan:p,lo,hi,rowH,rulerH,laneH,dTop:rulerH+rows*rowH+6,drumRows,H,dpr,col,orig,
+    notes:pitched.map(e=>({s:e.start,e:e.start+e.dur,m:pitch(e),c:col(rollKeyOf(e))})).sort((a,b)=>a.s-b.s),
+    hits:hits.map(e=>({s:e.start,t:e.type,c:col(rollKeyOf(e))})).sort((a,b)=>a.s-b.s)};
   for(const e of pitched){const x=e.start*pps,w=Math.max(2,e.dur*pps-1),y=yOf(pitch(e))+1,hh=rowH-3,c=col(rollKeyOf(e)),st=status(e);
     if(st==='mine'){g.fillStyle=c;g.fillRect(x,y,w,hh)}else if(st==='borrow'){g.fillStyle=c;g.globalAlpha=0.55;g.fillRect(x,y,w,hh);g.globalAlpha=1;g.strokeStyle='#e0a100';g.lineWidth=1.5;g.strokeRect(x+0.75,y+0.75,w-1.5,hh-1.5)}
     else{g.strokeStyle=c;g.globalAlpha=st==='skip'?0.3:0.9;g.lineWidth=1.2;g.strokeRect(x+0.6,y+0.6,w-1.2,hh-1.2);g.globalAlpha=1}
@@ -999,13 +1006,40 @@ function drawRoll(){
   const dTop=rulerH+rows*rowH+6;drumRows.forEach((t,i)=>{g.fillStyle=i%2?'#232b33':'#283039';g.fillRect(0,dTop+i*laneH,W,laneH-1)});
   for(const e of hits){const i=drumRows.indexOf(e.type);if(i<0)continue;const x=e.start*pps,y=dTop+i*laneH+2,st=e.stand?'stand':status(e),c=col(rollKeyOf(e));
     if(st==='mine'){g.fillStyle=c;g.fillRect(x,y,3,laneH-5)}else{g.strokeStyle=c;g.strokeRect(x+0.5,y+0.5,3,laneH-6)}rollGeom.rects.push({x:x-1,y,w:5,h:laneH-5,e,st})}
-  k.fillStyle='#1e252c';k.fillRect(0,0,58,H);
-  for(let m=lo;m<=hi;m++){const y=yOf(m);k.fillStyle=black(m)?'#111':'#e9edf0';k.fillRect(0,y,black(m)?36:58,rowH-1);
-    if(rowH>=8&&(m%12===0||rowH>=11)){k.fillStyle=black(m)?'#ddd':'#222';k.font=`${Math.min(10,rowH-1)}px system-ui`;k.fillText(nName(m),black(m)?3:24,y+rowH-2)}}
-  k.fillStyle='#9fb0bf';k.font='11px system-ui';drumRows.forEach((t,i)=>k.fillText(KITNAME[t],4,dTop+i*laneH+11));
+  drawKeys(new Map(),new Set());
   $('rollHead').style.height=H+'px';
 }
-$('rollLegend').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;const k=b.dataset.k;rollHidden.has(k)?rollHidden.delete(k):rollHidden.add(k);drawRoll()});
+$('rollLegend').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;const k=b.dataset.k;rollHidden.has(k)?rollHidden.delete(k):rollHidden.add(k);drawRoll();
+  if(playing){const now=ctx.currentTime;for(const n of playing.nodes)if(n._rk===k)try{n.stop(now+0.03)}catch(_){}}});
+const pressed=new Map();
+function drawKeys(active,drumsOn){const G=rollGeom;if(!G)return;const k=$('rollKeys').getContext('2d'),black=m=>[1,3,6,8,10].includes(((m%12)+12)%12),yOf=m=>G.rulerH+(G.hi-m)*G.rowH;
+  k.setTransform(G.dpr,0,0,G.dpr,0,0);k.fillStyle='#1e252c';k.fillRect(0,0,58,G.H);
+  for(let m=G.lo;m<=G.hi;m++){const y=yOf(m),b=black(m),on=active.get(m)||(pressed.has(m)?'#ff5a3c':null);
+    k.fillStyle=on||(b?'#111':'#e9edf0');k.fillRect(0,y,b?36:58,G.rowH-1);
+    if(G.rowH>=8&&(m%12===0||G.rowH>=11||on)){k.fillStyle=on?'#000':b?'#ddd':'#222';k.font=`${Math.min(10,G.rowH-1)}px system-ui`;k.fillText(nName(m),b?3:24,y+G.rowH-2)}}
+  G.drumRows.forEach((t,i)=>{const y=G.dTop+i*G.laneH,on=drumsOn.has(t)||pressed.has(t);k.fillStyle=on?'#ff5a3c':'#1e252c';k.fillRect(0,y,58,G.laneH-1);k.fillStyle=on?'#fff':'#9fb0bf';k.font='11px system-ui';k.fillText(KITNAME[t],4,y+11)})}
+function rollFrame(t){const G=rollGeom;if(!G)return;const act=new Map(),dr=new Set();
+  let lo=0,hi=G.notes.length;while(lo<hi){const mid=(lo+hi)>>1;if(G.notes[mid].s<=t)lo=mid+1;else hi=mid}
+  for(let i=lo-1;i>=0&&t-G.notes[i].s<8;i--){const n=G.notes[i];if(t<n.e)act.set(n.m,n.c)}
+  lo=0;hi=G.hits.length;while(lo<hi){const mid=(lo+hi)>>1;if(G.hits[mid].s<=t)lo=mid+1;else hi=mid}
+  for(let i=lo-1;i>=0&&t-G.hits[i].s<0.12;i--)dr.add(G.hits[i].t);
+  drawKeys(act,dr)}
+function keyAt(y){const G=rollGeom;if(!G)return null;if(y>=G.rulerH&&y<G.rulerH+(G.hi-G.lo+1)*G.rowH)return G.hi-Math.floor((y-G.rulerH)/G.rowH);
+  const i=Math.floor((y-G.dTop)/G.laneH);return y>=G.dTop&&i>=0&&i<G.drumRows.length?G.drumRows[i]:null}
+function keyOn(k){if(k==null||pressed.has(k))return;ensureCtx();ctx.resume();if(!bus)bus=makeBus(ctx,opts().reverb);
+  if(!playing){bus.master.gain.cancelScheduledValues(ctx.currentTime);bus.master.gain.setValueAtTime(1,ctx.currentTime)}
+  const o=Object.assign(opts(),{fill:true}),drum=typeof k==='string',sel=$('keySound').value,type=drum?k:sel==='auto'?(k<S.P?'dum':'ooh'):sel,src=sourceFor(type,drum?null:k,o);if(!src)return;
+  const s=ctx.createBufferSource(),g=ctx.createGain(),now=ctx.currentTime;s.buffer=src.buf;s.playbackRate.value=2**((src.cents||0)/1200);
+  const vol=src.norm*(drum?0.55:0.35);if(drum){g.gain.value=vol;s.start(now)}else{g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(vol,now+0.04);s.start(now,0.1)}
+  s.connect(g).connect(bus.input);pressed.set(k,{s,g,drum});
+  const r=drum?resolve(k,null,true):resolve(type,k,S.shift),how=r.how==='exact'?'your recording':r.how==='alt'?`your “${type==='ooh'?'dum':'ooh'}” on this note`:r.how==='shift'?`borrowed from your ${nName(r.from)}`:'a stand-in (not recorded yet)';
+  $('rollInfo').textContent=`${drum?KITNAME[k]:nName(k)+` · “${type}”`} · playing ${how}`;if(!playing)drawKeys(new Map(),new Set())}
+function keyOff(k){const p=pressed.get(k);if(!p)return;pressed.delete(k);if(!p.drum){const now=ctx.currentTime;p.g.gain.cancelScheduledValues(now);p.g.gain.setValueAtTime(p.g.gain.value,now);p.g.gain.linearRampToValueAtTime(0,now+0.15);p.s.stop(now+0.2)}
+  if(!playing)drawKeys(new Map(),new Set())}
+{const kc=$('rollKeys');let down=false,cur=null;
+  kc.addEventListener('pointerdown',e=>{down=true;kc.setPointerCapture(e.pointerId);cur=keyAt(e.offsetY);keyOn(cur)});
+  kc.addEventListener('pointermove',e=>{if(!down)return;const k=keyAt(e.offsetY);if(k!==cur){keyOff(cur);cur=k;keyOn(cur)}});
+  const up=()=>{if(!down)return;down=false;keyOff(cur);cur=null};kc.addEventListener('pointerup',up);kc.addEventListener('pointercancel',up);kc.style.touchAction='none';kc.style.cursor='pointer'}
 $('rollMode').onchange=drawRoll;$('rollZoom').oninput=drawRoll;
 $('rollCv').addEventListener('click',ev=>{if(!rollGeom)return;const r=$('rollCv').getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;
   const hit=rollGeom.rects.find(q=>x>=q.x&&x<=q.x+q.w&&y>=q.y&&y<=q.y+q.h);if(!hit){$('rollInfo').textContent='Solid = your recording · gold outline = borrowed from a nearby note · hollow = stand-in sound.';return}
