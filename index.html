@@ -405,7 +405,7 @@ function autoPart(pt,P){
   else if(/vocal|voice|melody|lead vox|singer|^lead$/i.test(pt.name))sound='sing';
   else if((prog>=32&&prog<=39)||pm<48)sound='dum';
   const plucky=(prog>=0&&prog<=15)||(prog>=24&&prog<=31),style=sound==='kit'?'hit':durMed<0.3?'short':plucky?'fade':'hold',center=sound==='dum'?P-7:P+5;
-  let oct=0;if(sound!=='kit'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=P-12&&m<=P+11)inr++}
+  let oct=0;if(sound!=='kit'&&sound!=='sing'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=P-12&&m<=P+11)inr++}
     const sc=inr*1000-Math.abs(pm+12*k-center);if(sc>best){best=sc;oct=k}}}
   return{sound,style,oct,vol:tom?95:sound==='kit'?80:sound==='sing'?70:65};
 }
@@ -425,11 +425,11 @@ function midiPlan(parsed,title,P){
 function autoFx(pt,s,P){if(s.sound!=='ooh'||!(s.oct<0))return 0;const ms=pt.notes.map(n=>n[2]).sort((a,b)=>a-b),pm=ms[ms.length>>1];return pm>P+11?Math.min(1,-s.oct):0}
 function buildMidiSong(plan,o){
   const f=plan.bpm/o.bpm,L=o.P-12,H=o.P+11,ev=[],pans=[-0.35,0.35,-0.2,0.2,-0.5,0.5,0];let end=0;
-  const fold=n=>{while(n<L)n+=12;while(n>H)n-=12;return n};
+  const fold=n=>{if(n>=L-2&&n<=H+2)return n;while(n<L)n+=12;while(n>H)n-=12;return n};
   plan.parts.forEach((pt,pi)=>{const s=pt.set||{};if(o.solo!=null&&o.solo!==pi)return;let snd=s.sound;
     if(o.original){snd=pt.drum||snd==='kit'?'kit':'orig'}
-    else{if(snd==='sing')snd=o.guide?'guide':'off';if(!snd||snd==='off')return}
-    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25,orig:0.22}[snd]*((s.vol??70)/100);
+    else{if(snd==='sing')snd=o.guide?'guide':o.hasVocal?'off':'ooh';if(!snd||snd==='off')return}
+    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25,orig:0.22}[snd]*((s.vol??70)/100)*(s.sound==='sing'?1.6:1);
     for(const n of pt.notes){const start=n[0]*f,dur=Math.max(0.06,n[1]*f),vel=Math.min(1.2,(n[3]||100)/105);end=Math.max(end,start+dur);
       if(snd==='kit'){const k=drumFor(pt,n[2]);if(!k)continue;ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,cents:k.cents||0,stand:!!o.original,pi})}
       else if(snd==='orig')ev.push({type:'organ',midi:n[2]+(o.transpose||0),start,dur,kind:'pad',pan,vol:base*vel,orig:true,pi})
@@ -842,7 +842,7 @@ function makeBus(ac,reverb){
   return{input,master,wet};
 }
 const opts=()=>{const p=curPlan();return{P:S.P,transpose:S.tr[p.id]||0,bpm:S.bpm[p.id]||p.bpm,chordVol:S.chordVol/100*0.55,bassVol:S.bassVol/100*0.75,drumVol:S.drumVol/100*0.6,
-  fill:S.fill,shift:S.shift,reverb:S.reverb/100*0.6,atAll:S.atAll,atChords:S.atChords,atBass:S.atBass,guide:false}};
+  fill:S.fill,shift:S.shift,reverb:S.reverb/100*0.6,atAll:S.atAll,atChords:S.atChords,atBass:S.atBass,guide:false,hasVocal:!!chosen('vocal:'+p.id)}};
 function standIn(e){const key=(e.orig?'org8:'+e.midi:'kit:'+e.type);let b=bufCache.get(key);if(!b){const sr=SR(),d=e.orig?synthOrgan(mToF(e.midi),sr,8):synthKit(e.type,sr);b={buf:mkBuf(d,sr),norm:e.orig?0.1/rmsOf(d):0.5/peakOf(d)};bufCache.set(key,b)}return Object.assign({cents:0,fill:true},b)}
 function prepare(plan,o){const song=buildSong(plan,o);for(const e of song.events)e.src=e.stand||e.orig?standIn(e):sourceFor(e.type,e.midi,o);song.events.sort((a,b)=>a.start-b.start);return song}
 function scheduleEvent(ac,out,t0,e,o,r){const src=e.src;if(!src)return null;
@@ -935,7 +935,7 @@ function renderPlay(){
   $('missing').textContent=miss.length?`Not recorded yet: ${miss.join(', ')}. ${S.fill?'Those use a stand-in sound for now.':'Those are skipped.'}`:
     c.shift?`Everything is covered; ${c.shift} note${c.shift>1?'s':''} borrow${c.shift>1?'':'s'} from a nearby recording.`:'Every sound is your voice.';
 }
-const SOUNDS=[['ooh','Your “ooh”'],['dum','Your “dum”'],['kit','Beatbox'],['sing','You sing it'],['guide','Stand-in tone'],['off','Off']];
+const SOUNDS=[['ooh','Your “ooh”'],['dum','Your “dum”'],['kit','Beatbox'],['sing','You sing it (plays your “ooh” until you record vocals)'],['guide','Stand-in tone'],['off','Off']];
 function renderParts(p){$('parts').innerHTML=p.parts.map((pt,i)=>{const s=pt.set,ms=pt.notes.map(n=>n[2]),lo=Math.min(...ms),hi=Math.max(...ms);
   return`<div class="part" data-i="${i}"><div><b>${esc(pt.name)}</b><div class="meta">${pt.notes.length} notes · ${pt.drum?'drum kit':nName(lo)+'–'+nName(hi)}${s.why&&s.sound==='off'?' · off: '+esc(s.why):''}</div></div>
   <select data-k="sound" aria-label="Sound">${SOUNDS.map(([v,l])=>`<option value="${v}"${s.sound===v?' selected':''}>${l}</option>`).join('')}</select>
