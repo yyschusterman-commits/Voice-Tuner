@@ -383,11 +383,15 @@ function drumFor(pt,m){
 function autoPart(pt,P){
   const med=a=>{const s=[...a].sort((x,y)=>x-y);return s[s.length>>1]||0},durMed=med(pt.notes.map(n=>n[1])),pm=med(pt.notes.map(n=>n[2])),prog=pt.program||0;
   let sound='ooh';
-  if(pt.drum||(prog>=112&&prog<=119))sound='kit';
+  const tom=!pt.drum&&prog>=112&&prog<=119;
+  if(pt.drum)sound='kit';
+  else if(tom)sound='dum';
   else if(/vocal|voice|melody|lead vox|singer|^lead$/i.test(pt.name))sound='sing';
   else if((prog>=32&&prog<=39)||pm<48)sound='dum';
-  const style=sound==='kit'?'hit':durMed<0.3?'short':'hold',center=sound==='dum'?P-7:P+5;
-  return{sound,style,oct:sound==='kit'?0:Math.max(-3,Math.min(3,Math.round((center-pm)/12))),vol:sound==='kit'?80:sound==='sing'?70:65};
+  const style=sound==='kit'?'hit':tom||durMed<0.3?'short':'hold',center=sound==='dum'?P-7:P+5;
+  let oct=0;if(sound!=='kit'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=P-12&&m<=P+11)inr++}
+    const sc=inr*1000-Math.abs(pm+12*k-center);if(sc>best){best=sc;oct=k}}}
+  return{sound,style,oct,vol:sound==='kit'?80:sound==='sing'?70:tom?75:65};
 }
 function midiPlan(parsed,title,P){
   const parts=parsed.parts.filter(x=>x.notes.length).map(x=>Object.assign(x,{set:autoPart(x,P)}));
