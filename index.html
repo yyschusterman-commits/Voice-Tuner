@@ -166,7 +166,10 @@ details summary{cursor:pointer;font-weight:600;min-height:32px}
         <div class="prog split" id="needBar" style="margin-top:8px"></div>
         <div class="row"><button id="nextMissing" class="primary">Record next missing sound</button><label class="row" style="margin:0"><input type="checkbox" id="onlyNeed"> Only show this song's sounds</label></div></div>
       <div><label class="lbl" for="needSong">Song</label><div class="row" style="margin-top:2px"><select id="needSong" style="width:100%"></select></div>
-        <label class="lbl" for="regSel">Your note range for chords and bass</label><div class="row" style="margin-top:2px"><select id="regSel" style="width:100%"></select></div>
+        <div class="two"><label class="lbl">Lowest note you can sing<select id="loSel" style="width:100%;margin-top:2px"></select></label>
+          <label class="lbl">Highest note you can sing<select id="hiSel" style="width:100%;margin-top:2px"></select></label></div>
+        <label class="lbl" for="regSel" style="display:block;margin-top:8px">Where bass notes end and chord notes start</label><div class="row" style="margin-top:2px"><select id="regSel" style="width:100%"></select></div>
+        <div class="row"><button id="useTuner" class="hidden">Use the range I saved in the Tuner</button></div>
         <p class="note" id="rangeNote"></p></div>
     </div>
   </div>
@@ -397,7 +400,7 @@ function drumFor(pt,m){
   if(m===49||m===52||m===55||m===57)return{type:'hat',g:0.9};if(m===51||m===53||m===59)return{type:'hat',g:0.45};
   return null;
 }
-function autoPart(pt,P){
+function autoPart(pt,P,lo,hi){lo=lo??P-12;hi=hi??P+11;
   const med=a=>{const s=[...a].sort((x,y)=>x-y);return s[s.length>>1]||0},durMed=med(pt.notes.map(n=>n[1])),pm=med(pt.notes.map(n=>n[2])),prog=pt.program||0;
   let sound='ooh';
   const tom=!pt.drum&&prog>=112&&prog<=119;
@@ -405,12 +408,12 @@ function autoPart(pt,P){
   else if(/vocal|voice|melody|lead vox|singer|^lead$/i.test(pt.name))sound='sing';
   else if((prog>=32&&prog<=39)||pm<48)sound='dum';
   const plucky=(prog>=0&&prog<=15)||(prog>=24&&prog<=31),style=sound==='kit'?'hit':durMed<0.3?'short':plucky?'fade':'hold',center=sound==='dum'?P-7:P+5;
-  let oct=0;if(sound!=='kit'&&sound!=='sing'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=P-12&&m<=P+11)inr++}
+  let oct=0;if(sound!=='kit'&&sound!=='sing'){let best=-Infinity;for(let k=-3;k<=3;k++){let inr=0;for(const n of pt.notes){const m=n[2]+12*k;if(m>=lo&&m<=hi)inr++}
     const sc=inr*1000-Math.abs(pm+12*k-center);if(sc>best){best=sc;oct=k}}}
   return{sound,style,oct,vol:tom?95:sound==='kit'?80:sound==='sing'?70:65};
 }
-function midiPlan(parsed,title,P){
-  const parts=parsed.parts.filter(x=>x.notes.length).map(x=>Object.assign(x,{set:autoPart(x,P)}));
+function midiPlan(parsed,title,P,lo,hi){
+  const parts=parsed.parts.filter(x=>x.notes.length).map(x=>Object.assign(x,{set:autoPart(x,P,lo,hi)}));
   const keyset=pt=>new Set(pt.notes.map(n=>Math.round(n[0]*20)+':'+n[2]%12)),overlap=(a,ks)=>{let h=0;for(const n of a.notes){const k=Math.round(n[0]*20);if(ks.has(k+':'+n[2]%12)||ks.has((k-1)+':'+n[2]%12)||ks.has((k+1)+':'+n[2]%12))h++}return h/a.notes.length};
   const sing=parts.filter(x=>x.set.sound==='sing'),kept=[];
   for(const pt of parts){if(pt.set.sound!=='ooh'&&pt.set.sound!=='dum')continue;
@@ -422,14 +425,14 @@ function midiPlan(parsed,title,P){
   return{format:'pitchhold-midi-1',kind:'midi',id:slug(title)+'-midi',title,trimmed:trim,artist:'MIDI file',level:'midi',bpm:parsed.bpm,beatsPerBar:parsed.beatsPerBar,
     parts,length:parsed.length-trim,key:'',notes:'',sections:{},order:[]};
 }
-function autoFx(pt,s,P){if(s.sound!=='ooh'||!(s.oct<0))return 0;const ms=pt.notes.map(n=>n[2]).sort((a,b)=>a-b),pm=ms[ms.length>>1];return pm>P+11?Math.min(1,-s.oct):0}
+function autoFx(pt,s,P,hi){hi=hi??P+11;if(s.sound!=='ooh'||!(s.oct<0))return 0;const ms=pt.notes.map(n=>n[2]).sort((a,b)=>a-b),pm=ms[ms.length>>1];return pm>hi?Math.min(1,-s.oct):0}
 function buildMidiSong(plan,o){
-  const f=plan.bpm/o.bpm,L=o.P-12,H=o.P+11,ev=[],pans=[-0.35,0.35,-0.2,0.2,-0.5,0.5,0];let end=0;
+  const f=plan.bpm/o.bpm,L=o.lo??o.P-12,H=o.hi??o.P+11,ev=[],pans=[-0.35,0.35,-0.2,0.2,-0.5,0.5,0];let end=0;
   const fold=n=>{if(n>=L-2&&n<=H+2)return n;while(n<L)n+=12;while(n>H)n-=12;return n};
   plan.parts.forEach((pt,pi)=>{const s=pt.set||{};if(o.solo!=null&&o.solo!==pi)return;let snd=s.sound;
     if(o.original){snd=pt.drum||snd==='kit'?'kit':'orig'}
     else{if(snd==='sing')snd=o.guide?'guide':o.hasVocal?'off':'ooh';if(!snd||snd==='off')return}
-    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25,orig:0.22}[snd]*((s.vol??70)/100)*(s.sound==='sing'?1.6:1);
+    const fx=s.fx??autoFx(pt,s,o.P,H),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25,orig:0.22}[snd]*((s.vol??70)/100)*(s.sound==='sing'?1.6:1);
     for(const n of pt.notes){const start=n[0]*f,dur=Math.max(0.06,n[1]*f),vel=Math.min(1.2,(n[3]||100)/105);end=Math.max(end,start+dur);
       if(snd==='kit'){const k=drumFor(pt,n[2]);if(!k)continue;ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,cents:k.cents||0,stand:!!o.original,pi})}
       else if(snd==='orig')ev.push({type:'organ',midi:n[2]+(o.transpose||0),start,dur,kind:'pad',pan,vol:base*vel,orig:true,pi})
@@ -437,7 +440,7 @@ function buildMidiSong(plan,o){
   return{events:ev,chart:[],segs:[],total:end+0.6,spb:60/o.bpm,beats:Math.round(end*o.bpm/60)};
 }
 const sid=(type,midi)=>midi==null?type:type+':'+midi;
-function songNeeds(plan,P,transpose){const b=buildSong(plan,{P,transpose,bpm:plan.bpm}),m=new Map();
+function songNeeds(plan,P,transpose,lo,hi){const b=buildSong(plan,{P,transpose,bpm:plan.bpm,lo,hi}),m=new Map();
   for(const e of b.events)if(e.type!=='organ')m.set(sid(e.type,e.midi),{type:e.type,midi:e.midi});
   const order={kick:0,snare:1,hat:2,dum:3,ooh:4};
   return[...m.values()].sort((a,b)=>order[a.type]-order[b.type]||(a.midi||0)-(b.midi||0))}
@@ -550,6 +553,7 @@ const S=Object.assign({hold:1.5,tol:35,sens:50,song:'pop',bpm:{},tr:{},chordVol:
 S.bpm=S.bpm||{};S.tr=S.tr||{};
 if(!S.P){let best=55;if(range&&range.low!=null&&range.high!=null){let bd=99;for(let t=40;t<=72;t++)if(t-12>=range.low&&t+11<=range.high){const d=Math.abs(t-0.5-(range.low+range.high)/2);if(d<bd){bd=d;best=t}}}S.P=best}
 S.vocVol=S.vocVol??80;S.vocNudge=S.vocNudge??0;S.guide=S.guide??true;
+S.lo=S.lo??S.P-12;S.hi=S.hi??S.P+11;
 const save=()=>store.set('ps3_settings',S);save();
 const savePlans=()=>{if(!store.set('ps_plans',userPlans))showErr('This browser ran out of room to save songs. Remove a song you don’t need.')};
 const fmt=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
@@ -598,7 +602,7 @@ function resolve(type,midi,allowShift){
   if(allowShift)for(const d of[1,-1,2,-2])for(const ty of[type,alt]){t=chosen(sid(ty,midi+d));if(t)return{take:t,shift:-d,how:'shift',from:midi+d}}
   return{how:'none'};
 }
-function coverage(plan){const needs=songNeeds(plan,S.P,S.tr[plan.id]||0),out={needs,ready:0,shift:0,missing:[],borrowed:[]};
+function coverage(plan){const needs=songNeeds(plan,S.P,S.tr[plan.id]||0,S.lo,S.hi),out={needs,ready:0,shift:0,missing:[],borrowed:[]};
   for(const n of needs){const r=resolve(n.type,n.midi,S.shift);n.how=r.how;if(r.how==='exact'||r.how==='alt')out.ready++;else if(r.how==='shift'){out.shift++;out.borrowed.push(n)}else out.missing.push(n)}
   return out}
 function splitBar(c){const t=c.needs.length||1;return`<i style="width:${c.ready/t*100}%;background:var(--good)"></i><i style="width:${c.shift/t*100}%;background:var(--gold)"></i>`}
@@ -628,7 +632,7 @@ $('planFileBtn').onclick=()=>$('planFile').click();
 function addMidi(buf,name){const m=$('planMsg');
   try{const parsed=parseMidi(buf);if(!parsed.parts.some(x=>x.notes.length))throw new Error('No notes found in that file.');
     const title=String(name||'MIDI song').replace(/\.(mid|midi)$/i,'').replace(/^[0-9a-f]{8}-/i,'').replace(/[-_]+/g,' ').replace(/\s+\d+$/,'').trim()||'MIDI song';
-    const p=midiPlan(parsed,title,S.P);userPlans=userPlans.filter(x=>x.id!==p.id).concat([p]);savePlans();S.song=p.id;needSong=p.id;save();
+    const p=midiPlan(parsed,title,S.P,S.lo,S.hi);userPlans=userPlans.filter(x=>x.id!==p.id).concat([p]);savePlans();S.song=p.id;needSong=p.id;save();
     const c=coverage(p),cnt=k=>p.parts.filter(x=>x.set.sound===k).length;
     m.innerHTML=`<div class="msg ok"><b>Added “${esc(title)}”</b> from MIDI: ${p.parts.length} parts, ${fmt(p.length)}, ${p.bpm} bpm.<br>${cnt('dum')} bass part${cnt('dum')===1?'':'s'} → your “dum”, ${cnt('kit')} drum part${cnt('kit')===1?'':'s'} → beatbox, ${cnt('sing')} melody part${cnt('sing')===1?'':'s'} → you sing it, ${cnt('ooh')} other part${cnt('ooh')===1?'':'s'} → your “ooh”.<br>It needs ${c.needs.length} sounds; you have ${c.ready}${c.shift?` (+${c.shift} borrowed)`:''}. Press Play to hear it, and change any part under Parts.</div>`;
     renderSongs();return true}
@@ -670,7 +674,10 @@ function renderRec(){
   const ps=plans();$('needSong').innerHTML=ps.map(p=>`<option value="${esc(p.id)}">${esc(p.title)}</option>`).join('');
   needSong=needSong&&ps.some(p=>p.id===needSong)?needSong:S.song;$('needSong').value=needSong;
   let h='';for(let t=40;t<=72;t++)h+=`<option value="${t}">Chords ${nName(t)}–${nName(t+11)} · bass ${nName(t-12)}–${nName(t-1)}</option>`;$('regSel').innerHTML=h;$('regSel').value=S.P;
-  $('rangeNote').textContent=range&&range.low!=null&&range.high!=null?`Your saved range is ${nName(range.low)}–${nName(range.high)}.`:'Save your range in the Tuner and this matches it for you.';
+  let lo='',hi='';for(let m=28;m<S.P;m++)lo+=`<option value="${m}">${nName(m)}</option>`;for(let m=S.P;m<=88;m++)hi+=`<option value="${m}">${nName(m)}</option>`;
+  $('loSel').innerHTML=lo;$('hiSel').innerHTML=hi;$('loSel').value=S.lo;$('hiSel').value=S.hi;
+  const tr=range&&range.low!=null&&range.high!=null;$('useTuner').classList.toggle('hidden',!tr);if(tr)$('useTuner').textContent=`Use the range I saved in the Tuner (${nName(range.low)}–${nName(range.high)})`;
+  $('rangeNote').textContent=`The app uses your notes from ${nName(S.lo)} to ${nName(S.hi)} (${S.hi-S.lo+1} notes each for “ooh” and “dum”). Notes outside that get pitch-shifted from your nearest recording. Widen it if you can sing further, then record the new notes.`;
   $('onlyNeed').checked=S.onlyNeed;renderSlots();
 }
 function renderSlots(){
@@ -681,12 +688,15 @@ function renderSlots(){
   const slot=(type,midi)=>{const id=sid(type,midi),tk=chosen(id),n=needMap.get(id),dim=S.onlyNeed&&!n;
     const how=n&&!tk?(n.how==='alt'?'<small>using your '+(type==='ooh'?'dum':'ooh')+'</small>':n.how==='shift'?'<small>borrowed</small>':'<small>needed</small>'):tk?`<span class="stars">${starStr(tk.stars)}</span>`:'<small>not recorded</small>';
     return`<button class="slot${tk?' done':''}${n?' need':''}${n&&n.how==='shift'?' borrow':''}${dim?' dim':''}${sel&&sid(sel.type,sel.midi)===id?' sel':''}" data-type="${type}" data-m="${midi==null?'':midi}">${n?'<span class="dot">●</span>':''}<b>${label(type,midi)}</b>${flatOf(midi)}${how}</button>`};
-  const P=S.P;let o='',d='';for(let m=P-12;m<=P+11;m++){const keep=t=>needMap.has(sid(t,m))||chosen(sid(t,m));if(m>=P||keep('ooh'))o+=slot('ooh',m);if(m<P||keep('dum'))d+=slot('dum',m)}
+  const P=S.P;let o='',d='';for(let m=S.lo;m<=S.hi;m++){const keep=t=>needMap.has(sid(t,m))||chosen(sid(t,m));if(m>=P||keep('ooh'))o+=slot('ooh',m);if(m<P||keep('dum'))d+=slot('dum',m)}
   $('slotsOoh').innerHTML=o;$('slotsDum').innerHTML=d;$('slotsKit').innerHTML=KIT.map(k=>slot(k,null)).join('');
 }
 for(const id of['slotsOoh','slotsDum','slotsKit'])$(id).addEventListener('click',e=>{const b=e.target.closest('.slot');if(b&&!rec)select(b.dataset.type,b.dataset.m===''?null:+b.dataset.m)});
 $('needSong').onchange=()=>{needSong=$('needSong').value;renderSlots()};
-$('regSel').onchange=()=>{S.P=+$('regSel').value;save();sel=null;select(null);renderSlots()};
+$('regSel').onchange=()=>{S.P=+$('regSel').value;S.lo=Math.min(S.lo,S.P-1);S.hi=Math.max(S.hi,S.P);save();sel=null;select(null);renderRec()};
+$('loSel').onchange=()=>{S.lo=+$('loSel').value;save();bufCache.clear();renderRec()};
+$('hiSel').onchange=()=>{S.hi=+$('hiSel').value;save();bufCache.clear();renderRec()};
+$('useTuner').onclick=()=>{S.lo=Math.min(range.low,S.P-1);S.hi=Math.max(range.high,S.P);save();renderRec()};
 $('onlyNeed').onchange=()=>{S.onlyNeed=$('onlyNeed').checked;save();renderSlots()};
 $('nextMissing').onclick=()=>{const plan=plans().find(p=>p.id===needSong),c=coverage(plan),nx=c.missing[0]||c.borrowed[0];if(nx){select(nx.type,nx.midi);$('recCard').scrollIntoView({behavior:'smooth',block:'start'})}};
 function select(type,midi){
@@ -841,7 +851,7 @@ function makeBus(ac,reverb){
   conv.buffer=ir;wet.gain.value=reverb;input.gain.value=1.8;input.connect(master);input.connect(conv);conv.connect(wet);wet.connect(master);master.connect(comp);comp.connect(ac.destination);
   return{input,master,wet};
 }
-const opts=()=>{const p=curPlan();return{P:S.P,transpose:S.tr[p.id]||0,bpm:S.bpm[p.id]||p.bpm,chordVol:S.chordVol/100*0.55,bassVol:S.bassVol/100*0.75,drumVol:S.drumVol/100*0.6,
+const opts=()=>{const p=curPlan();return{P:S.P,lo:S.lo,hi:S.hi,transpose:S.tr[p.id]||0,bpm:S.bpm[p.id]||p.bpm,chordVol:S.chordVol/100*0.55,bassVol:S.bassVol/100*0.75,drumVol:S.drumVol/100*0.6,
   fill:S.fill,shift:S.shift,reverb:S.reverb/100*0.6,atAll:S.atAll,atChords:S.atChords,atBass:S.atBass,guide:false,hasVocal:!!chosen('vocal:'+p.id)}};
 function standIn(e){const key=(e.orig?'org8:'+e.midi:'kit:'+e.type);let b=bufCache.get(key);if(!b){const sr=SR(),d=e.orig?synthOrgan(mToF(e.midi),sr,8):synthKit(e.type,sr);b={buf:mkBuf(d,sr),norm:e.orig?0.1/rmsOf(d):0.5/peakOf(d)};bufCache.set(key,b)}return Object.assign({cents:0,fill:true},b)}
 function prepare(plan,o){const song=buildSong(plan,o);for(const e of song.events)e.src=e.stand||e.orig?standIn(e):sourceFor(e.type,e.midi,o);song.events.sort((a,b)=>a.start-b.start);return song}
@@ -941,7 +951,7 @@ function renderParts(p){$('parts').innerHTML=p.parts.map((pt,i)=>{const s=pt.set
   <select data-k="sound" aria-label="Sound">${SOUNDS.map(([v,l])=>`<option value="${v}"${s.sound===v?' selected':''}>${l}</option>`).join('')}</select>
   <select data-k="style" aria-label="Style"${s.sound==='kit'?' disabled':''}><option value="hold"${s.style==='hold'||s.style==='hit'||!s.style?' selected':''}>Held</option><option value="fade"${s.style==='fade'?' selected':''}>Fades (like piano)</option><option value="short"${s.style==='short'?' selected':''}>Short</option></select>
   <select data-k="oct" aria-label="Octave"${s.sound==='kit'?' disabled':''}>${[-3,-2,-1,0,1,2,3].map(k=>`<option value="${k}"${(s.oct||0)===k?' selected':''}>Octave ${k>0?'+':''}${k}</option>`).join('')}</select>
-  <select data-k="fx" aria-label="Pitch up effect"${s.sound==='kit'?' disabled':''}>${[0,1,2].map(k=>`<option value="${k}"${(s.fx??autoFx(pt,s,S.P))===k?' selected':''}>${k?'Pitch up +'+k+' oct':'No effect'}</option>`).join('')}</select>
+  <select data-k="fx" aria-label="Pitch up effect"${s.sound==='kit'?' disabled':''}>${[0,1,2].map(k=>`<option value="${k}"${(s.fx??autoFx(pt,s,S.P,S.hi))===k?' selected':''}>${k?'Pitch up +'+k+' oct':'No effect'}</option>`).join('')}</select>
   <div style="display:flex;gap:6px;align-items:center"><input type="range" data-k="vol" min="0" max="100" value="${s.vol??70}" aria-label="Volume"><button data-solo="${i}" class="${soloPart===i?'live':''}" style="min-height:36px;padding:0 10px;font-size:14px">Solo</button></div></div>`}).join('')}
 $('parts').addEventListener('click',e=>{const b=e.target.closest('[data-solo]');if(!b)return;const i=+b.dataset.solo,was=playing&&playing.original;soloPart=soloPart===i?null:i;renderParts(curPlan());if(playing)playSong({original:was})});
 $('parts').addEventListener('input',e=>{const el=e.target.closest('[data-k]');if(!el||el.dataset.k!=='vol')return;const p=curPlan();p.parts[+el.closest('.part').dataset.i].set.vol=+el.value;savePlans()});
