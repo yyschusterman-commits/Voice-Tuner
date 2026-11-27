@@ -94,10 +94,17 @@ button.use.on{background:var(--good);border-color:var(--good);color:#fff}
 .ctl label{display:flex;flex-direction:column;font-size:13px;color:var(--mute);margin:6px 0}
 .ctl label.chk{flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:center;color:var(--ink);font-size:15px}
 input[type=range]{width:100%;accent-color:var(--blue);min-height:32px}
-.part{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,.8fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,.9fr);gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.part{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.1fr) minmax(0,.8fr) minmax(0,.9fr) minmax(0,1fr) minmax(0,1.3fr);gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .part .meta{font-size:13px;color:var(--mute)}.part select{width:100%;font-size:15px;padding:0 8px}
 .vtake{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}.vtake.chosen{background:var(--okbg);border-radius:10px;padding-inline:10px}
 .vtake .acts{display:flex;flex-wrap:wrap;gap:6px}.vtake .acts button{min-height:40px;font-size:15px;padding:0 10px}
+.rollWrap{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#1e252c;margin-top:8px}
+#rollKeys{flex:none;width:58px;display:block}
+#rollScroll{flex:1;overflow-x:auto;position:relative}
+#rollInner{position:relative}#rollCv{display:block;cursor:pointer}
+#rollHead{position:absolute;top:0;bottom:0;width:2px;background:#ff5a3c;left:0;pointer-events:none}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;font-size:13px;border-radius:16px}
+.chip i{width:12px;height:12px;border-radius:3px;display:inline-block}.chip.off{opacity:.35}
 .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px}
 pre{background:var(--soft);border-radius:10px;padding:12px;overflow-x:auto;font-size:13px;line-height:1.45}
 details summary{cursor:pointer;font-weight:600;min-height:32px}
@@ -208,10 +215,19 @@ details summary{cursor:pointer;font-weight:600;min-height:32px}
     <h2 id="playTitle">Song</h2><div class="note" id="playMeta" style="margin-top:-6px"></div>
     <div class="row"><button id="playBtn" class="primary">▶ Play</button>
       <label class="row" style="margin:0"><input type="checkbox" id="loopChk"> Loop</label>
-      <button id="wavBtn">Save as WAV</button><button id="goRec">Record what's missing</button></div>
+      <button id="wavBtn">Save as WAV</button><button id="goRec">Record what's missing</button><button id="checkBtn" class="hidden">▶ Check the MIDI (no voice)</button></div>
+    <p class="note hidden" id="checkNote">“Check the MIDI” plays the file exactly as written, in its real octaves, with simple stand-in sounds and the melody included. If that doesn’t sound like the song, the MIDI file is the problem; try another one.</p>
     <div id="chart"></div>
     <div id="posBox" class="hidden"><div class="prog"><i id="posBar" style="background:var(--blue);transition:none"></i></div><div class="note mono" id="posTxt">0:00</div></div>
     <p class="note" id="missing"></p>
+  </div>
+  <div class="card" id="rollCard">
+    <div class="row" style="margin-top:0;justify-content:space-between"><h2 style="margin:0">Piano roll</h2>
+      <div class="row" style="margin:0"><select id="rollMode" aria-label="What to show"><option value="mine">What plays (your voice)</option><option value="orig">As written in the file</option></select>
+      <label class="lbl row" style="margin:0">Zoom <input type="range" id="rollZoom" min="20" max="220" value="70" style="width:120px"></label></div></div>
+    <div id="rollLegend" class="row"></div>
+    <div class="rollWrap"><canvas id="rollKeys"></canvas><div id="rollScroll"><div id="rollInner"><canvas id="rollCv"></canvas><div id="rollHead"></div></div></div></div>
+    <p class="note" id="rollInfo">Solid = your recording · gold outline = borrowed from a nearby note · hollow = stand-in sound. Click a note for details; click a color to hide or show that part.</p>
   </div>
   <div class="card hidden" id="partsCard">
     <h2>Parts</h2>
@@ -409,10 +425,13 @@ function autoFx(pt,s,P){if(s.sound!=='ooh'||!(s.oct<0))return 0;const ms=pt.note
 function buildMidiSong(plan,o){
   const f=plan.bpm/o.bpm,L=o.P-12,H=o.P+11,ev=[],pans=[-0.35,0.35,-0.2,0.2,-0.5,0.5,0];let end=0;
   const fold=n=>{while(n<L)n+=12;while(n>H)n-=12;return n};
-  plan.parts.forEach((pt,pi)=>{const s=pt.set||{};let snd=s.sound;if(snd==='sing')snd=o.guide?'guide':'off';if(!snd||snd==='off')return;
-    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25}[snd]*((s.vol??70)/100);
+  plan.parts.forEach((pt,pi)=>{const s=pt.set||{};if(o.solo!=null&&o.solo!==pi)return;let snd=s.sound;
+    if(o.original){snd=pt.drum||snd==='kit'?'kit':'orig'}
+    else{if(snd==='sing')snd=o.guide?'guide':'off';if(!snd||snd==='off')return}
+    const fx=s.fx??autoFx(pt,s,o.P),pan=snd==='kit'?0:pans[pi%pans.length],base={ooh:0.3,dum:0.55,kit:0.45,guide:0.25,orig:0.22}[snd]*((s.vol??70)/100);
     for(const n of pt.notes){const start=n[0]*f,dur=Math.max(0.06,n[1]*f),vel=Math.min(1.2,(n[3]||100)/105);end=Math.max(end,start+dur);
-      if(snd==='kit'){const k=drumFor(pt,n[2]);if(!k)continue;ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,cents:k.cents||0,pi})}
+      if(snd==='kit'){const k=drumFor(pt,n[2]);if(!k)continue;ev.push({type:k.type,midi:null,start,dur:0.4,kind:'hit',pan:k.type==='hat'?0.25:0,vol:base*vel*k.g,cents:k.cents||0,stand:!!o.original,pi})}
+      else if(snd==='orig')ev.push({type:'organ',midi:n[2]+(o.transpose||0),start,dur,kind:'pad',pan,vol:base*vel,orig:true,pi})
       else ev.push({type:snd==='guide'?'organ':snd,midi:fold(n[2]+(o.transpose||0)+12*(s.oct||0)),start,dur,kind:s.style==='short'?'short':'pad',pan,vol:base*vel*(fx?1.25:1),fx,pi})}});
   return{events:ev,chart:[],segs:[],total:end+0.6,spb:60/o.bpm,beats:Math.round(end*o.bpm/60)};
 }
@@ -823,7 +842,8 @@ function makeBus(ac,reverb){
 }
 const opts=()=>{const p=curPlan();return{P:S.P,transpose:S.tr[p.id]||0,bpm:S.bpm[p.id]||p.bpm,chordVol:S.chordVol/100*0.55,bassVol:S.bassVol/100*0.75,drumVol:S.drumVol/100*0.6,
   fill:S.fill,shift:S.shift,reverb:S.reverb/100*0.6,atAll:S.atAll,atChords:S.atChords,atBass:S.atBass,guide:false}};
-function prepare(plan,o){const song=buildSong(plan,o);for(const e of song.events)e.src=sourceFor(e.type,e.midi,o);song.events.sort((a,b)=>a.start-b.start);return song}
+function standIn(e){const key=(e.orig?'org8:'+e.midi:'kit:'+e.type);let b=bufCache.get(key);if(!b){const sr=SR(),d=e.orig?synthOrgan(mToF(e.midi),sr,8):synthKit(e.type,sr);b={buf:mkBuf(d,sr),norm:e.orig?0.1/rmsOf(d):0.5/peakOf(d)};bufCache.set(key,b)}return Object.assign({cents:0,fill:true},b)}
+function prepare(plan,o){const song=buildSong(plan,o);for(const e of song.events)e.src=e.stand||e.orig?standIn(e):sourceFor(e.type,e.midi,o);song.events.sort((a,b)=>a.start-b.start);return song}
 function scheduleEvent(ac,out,t0,e,o,r){const src=e.src;if(!src)return null;
   const s=ac.createBufferSource(),g=ac.createGain(),pn=ac.createStereoPanner();s.buffer=src.buf;const rate=2**(((src.cents||0)+(e.fx||0)*1200+(e.cents||0))/1200);s.playbackRate.value=rate;pn.pan.value=e.pan;
   const vol=(e.vol!=null?e.vol:{chords:o.chordVol,bass:o.bassVol,drums:o.drumVol}[e.part])*src.norm,st=Math.max(t0+e.start,ac.currentTime+0.01);
@@ -839,27 +859,29 @@ function vocalNode(ac,out,t0,o,plan){const tk=chosen('vocal:'+plan.id);if(!tk||M
   const s=ac.createBufferSource(),g=ac.createGain();s.buffer=b.buf;g.gain.value=b.norm*S.vocVol/100;
   const when=t0+tk.offset+S.vocNudge/1000,now=ac.currentTime;if(when>=now)s.start(when);else if(now-when<b.buf.duration)s.start(now,now-when);else return null;
   s.connect(g).connect(out);return s}
+let soloPart=null;
 function playSong(x){x=x||{};
-  stopSong();ensureCtx();ctx.resume();const o=Object.assign(opts(),{guide:!!x.vocal&&S.guide});if(!bus)bus=makeBus(ctx,o.reverb);
+  stopSong();ensureCtx();ctx.resume();const o=Object.assign(opts(),{guide:!!x.vocal&&S.guide,original:!!x.original,solo:soloPart});if(!bus)bus=makeBus(ctx,o.reverb);
   bus.wet.gain.value=o.reverb;bus.master.gain.cancelScheduledValues(ctx.currentTime);bus.master.gain.setValueAtTime(1,ctx.currentTime);
   $('playBtn').textContent='Loading…';$('playBtn').disabled=true;
   setTimeout(()=>{const song=prepare(curPlan(),o);$('playBtn').disabled=false;
     const plan=curPlan(),t0=ctx.currentTime+0.35;
-    playing={song,o,t0,firstT0:t0,plan,i:0,r:rng(1),nodes:new Set(),timer:setInterval(pump,100),vocal:x.vocal?{chunks:[],start:null}:null,noLoop:!!x.vocal};
-    if(!x.vocal){const v=vocalNode(ctx,bus.input,t0,o,plan);if(v)playing.nodes.add(v)}pump();
+    playing={song,o,t0,firstT0:t0,plan,original:!!x.original,i:0,r:rng(1),nodes:new Set(),timer:setInterval(pump,100),vocal:x.vocal?{chunks:[],start:null}:null,noLoop:!!x.vocal};
+    if(!x.vocal&&!x.original&&soloPart==null){const v=vocalNode(ctx,bus.input,t0,o,plan);if(v)playing.nodes.add(v)}pump();
+    if(x.original){$('checkBtn').textContent='■ Stop check';$('checkBtn').classList.add('live')}
     $('playBtn').textContent='■ Stop';$('playBtn').classList.add('live');
     if(x.vocal){$('vocBtn').textContent='■ Stop recording';$('vocBtn').classList.add('live');$('vocBtn').classList.remove('primary')}
     if(!rafId)rafId=requestAnimationFrame(tick)},30)}
 function pump(){const p=playing;if(!p)return;const now=ctx.currentTime,ev=p.song.events;
   while(p.i<ev.length&&p.t0+ev[p.i].start<now+1.5){const n=scheduleEvent(ctx,bus.input,p.t0,ev[p.i],p.o,p.r);if(n){p.nodes.add(n);n.onended=()=>p.nodes.delete(n)}p.i++}
   const end=p.t0+p.song.total;
-  if(p.i>=ev.length){if(S.loop&&!p.noLoop&&now>end-1.5){p.o=opts();p.song=prepare(p.plan,p.o);p.t0=end;p.i=0;const v=vocalNode(ctx,bus.input,end,p.o,p.plan);if(v)p.nodes.add(v)}
+  if(p.i>=ev.length){if(S.loop&&!p.noLoop&&now>end-1.5){p.o=Object.assign(opts(),{original:p.original,solo:soloPart});p.song=prepare(p.plan,p.o);p.t0=end;p.i=0;const v=vocalNode(ctx,bus.input,end,p.o,p.plan);if(v)p.nodes.add(v)}
     else if((!S.loop||p.noLoop)&&now>end+0.8)stopSong()}}
 function stopSong(){if(!playing)return;clearInterval(playing.timer);const now=ctx.currentTime,p=playing;playing=null;
   bus.master.gain.cancelScheduledValues(now);bus.master.gain.setValueAtTime(bus.master.gain.value,now);bus.master.gain.linearRampToValueAtTime(0,now+0.06);
   p.nodes.forEach(n=>{try{n.stop(now+0.08)}catch(e){}});
   if(p.vocal){$('vocBtn').textContent='● Record vocals';$('vocBtn').classList.remove('live');$('vocBtn').classList.add('primary');saveVocal(p)}
-  $('playBtn').textContent='▶ Play';$('playBtn').classList.remove('live');for(const s of document.querySelectorAll('.bar span.now'))s.classList.remove('now')}
+  $('playBtn').textContent='▶ Play';$('playBtn').classList.remove('live');$('checkBtn').textContent='▶ Check the MIDI (no voice)';$('checkBtn').classList.remove('live');for(const s of document.querySelectorAll('.bar span.now'))s.classList.remove('now')}
 function saveVocal(p){const v=p.vocal,n=v.chunks.length*HOP;if(n<SR()*1.5||v.start==null){$('vocMsg')&&($('vocMsg').textContent='That was too short to keep.');return}
   const pcm=new Float32Array(n);v.chunks.forEach((c,i)=>pcm.set(c,i*HOP));const comp=(ctx.outputLatency||ctx.baseLatency||0.02)+0.01;
   const tk={id:newId(),pcm,sr:SR(),offset:v.start-p.firstT0-comp,bpm:p.o.bpm,tr:p.o.transpose||0,dur:n/SR(),score:0,stars:0,at:Date.now(),vocal:true};
@@ -881,10 +903,12 @@ $('vocVol').oninput=()=>{S.vocVol=+$('vocVol').value;save()};
 $('vocNudge').oninput=()=>{S.vocNudge=+$('vocNudge').value;$('nudgeLbl').textContent=(S.vocNudge>0?'+':'')+S.vocNudge;save()};
 $('guideChk').onchange=()=>{S.guide=$('guideChk').checked;save()};
 function tick(){rafId=0;if(!playing)return;const now=ctx.currentTime,p=playing;let idx=-1;
+  if(rollGeom){const t=Math.max(0,now-p.t0),x=t*rollGeom.pps,sc=$('rollScroll');$('rollHead').style.left=x+'px';if(x<sc.scrollLeft||x>sc.scrollLeft+sc.clientWidth*0.85)sc.scrollLeft=Math.max(0,x-sc.clientWidth*0.15)}
   {const t=Math.max(0,Math.min(p.song.total,now-p.t0));$('posBar').style.width=(t/p.song.total*100)+'%';$('posTxt').textContent=fmt(t)+' / '+fmt(p.song.total)+(p.vocal?' · recording your vocals':'')}
   if(now>=p.t0){const beat=(now-p.t0)/p.song.spb,sg=p.song.segs.find(s=>beat>=s.start&&beat<s.start+s.beats);if(sg)idx=sg.id}
   for(const s of document.querySelectorAll('.bar span'))s.classList.toggle('now',+s.dataset.s===idx);rafId=requestAnimationFrame(tick)}
 $('playBtn').onclick=()=>{if(playing)stopSong();else playSong()};
+$('checkBtn').onclick=()=>{if(playing&&playing.original){stopSong();return}playSong({original:true})};
 $('goRec').onclick=()=>{needSong=S.song;showTab('rec')};
 
 function renderPlay(){
@@ -895,8 +919,9 @@ function renderPlay(){
     return NAMES[(ch.root+o.transpose+120)%12]+m[2]+(m[3]?'/'+NAMES[(ch.bass+o.transpose+120)%12]:'')};
   const isM=p.kind==='midi';$('chart').classList.toggle('hidden',isM);$('posBox').classList.toggle('hidden',!isM);$('partsCard').classList.toggle('hidden',!isM);
   for(const el of document.querySelectorAll('.chordOnly'))el.classList.toggle('hidden',isM);
+  $('checkBtn').classList.toggle('hidden',!isM);$('checkNote').classList.toggle('hidden',!isM);
   if(isM){$('playMeta').textContent=`MIDI file · ${p.parts.length} parts · ${fmt(song.total)} long${o.transpose?` · moved ${o.transpose>0?'+':''}${o.transpose}`:''}`;$('posTxt').textContent='0:00 / '+fmt(song.total);renderParts(p)}
-  renderVocals();
+  renderVocals();requestAnimationFrame(drawRoll);
   $('chart').innerHTML=isM?'':song.chart.map(sec=>{const s=p.sections[sec.name];
     return`<div class="sec"><div class="sname">${esc(sec.name)} · drums ${esc(s.drums)} · bass ${esc(s.bass)}${s.pad!=='hold'?' · chords '+esc(s.pad):''}</div><div class="chart">${
     sec.bars.map(b=>`<div class="bar">${b.map(it=>`<span data-s="${it.id}">${esc(it.text==='–'||it.text==='·'?it.text:tr(it.text))}</span>`).join('')}</div>`).join('')}</div></div>`}).join('');
@@ -912,7 +937,8 @@ function renderParts(p){$('parts').innerHTML=p.parts.map((pt,i)=>{const s=pt.set
   <select data-k="style" aria-label="Style"${s.sound==='kit'?' disabled':''}><option value="hold"${s.style!=='short'?' selected':''}>Held</option><option value="short"${s.style==='short'?' selected':''}>Short</option></select>
   <select data-k="oct" aria-label="Octave"${s.sound==='kit'?' disabled':''}>${[-3,-2,-1,0,1,2,3].map(k=>`<option value="${k}"${(s.oct||0)===k?' selected':''}>Octave ${k>0?'+':''}${k}</option>`).join('')}</select>
   <select data-k="fx" aria-label="Pitch up effect"${s.sound==='kit'?' disabled':''}>${[0,1,2].map(k=>`<option value="${k}"${(s.fx??autoFx(pt,s,S.P))===k?' selected':''}>${k?'Pitch up +'+k+' oct':'No effect'}</option>`).join('')}</select>
-  <input type="range" data-k="vol" min="0" max="100" value="${s.vol??70}" aria-label="Volume"></div>`}).join('')}
+  <div style="display:flex;gap:6px;align-items:center"><input type="range" data-k="vol" min="0" max="100" value="${s.vol??70}" aria-label="Volume"><button data-solo="${i}" class="${soloPart===i?'live':''}" style="min-height:36px;padding:0 10px;font-size:14px">Solo</button></div></div>`}).join('')}
+$('parts').addEventListener('click',e=>{const b=e.target.closest('[data-solo]');if(!b)return;const i=+b.dataset.solo,was=playing&&playing.original;soloPart=soloPart===i?null:i;renderParts(curPlan());if(playing)playSong({original:was})});
 $('parts').addEventListener('input',e=>{const el=e.target.closest('[data-k]');if(!el||el.dataset.k!=='vol')return;const p=curPlan();p.parts[+el.closest('.part').dataset.i].set.vol=+el.value;savePlans()});
 $('parts').addEventListener('change',e=>{const el=e.target.closest('[data-k]');if(!el)return;const p=curPlan(),pt=p.parts[+el.closest('.part').dataset.i],k=el.dataset.k;
   pt.set[k]=k==='sound'||k==='style'?el.value:+el.value;if(k==='sound'&&el.value==='kit')pt.set.style='hit';else if(k==='sound'&&pt.set.style==='hit')pt.set.style='hold';savePlans();renderPlay()});
@@ -940,6 +966,54 @@ $('wavBtn').onclick=async()=>{$('wavBtn').disabled=true;$('wavBtn').textContent=
   try{const b=await renderOffline(0,f=>{$('wavBtn').textContent=`Rendering… ${Math.round(f*100)}%`}),a=document.createElement('a');a.href=URL.createObjectURL(wav(b));a.download=slug(curPlan().title)+'-pitch-hold.wav';document.body.appendChild(a);a.click();a.remove()}
   catch(e){showErr('Couldn’t make the WAV: '+e.message)}
   $('wavBtn').disabled=false;$('wavBtn').textContent='Save as WAV'};
+
+
+// ---------- piano roll ----------
+const ROLLC=['#29b6f6','#ef5350','#ab47bc','#ffee58','#66bb6a','#ffa726','#26c6da','#ec407a','#9ccc65','#7e57c2','#bcaaa4','#42a5f5','#d4e157','#ff7043','#90a4ae'];
+const rollHidden=new Set();let rollGeom=null;
+function rollKeyOf(e){return e.pi!=null?e.pi:e.part}
+function rollName(p,k){return p.kind==='midi'?p.parts[k].name:{chords:'Chords',bass:'Bass',drums:'Drums'}[k]||k}
+function drawRoll(){
+  const p=curPlan(),orig=$('rollMode').value==='orig',o=Object.assign(opts(),{original:orig&&p.kind==='midi'}),song=buildSong(p,o);
+  if(!orig||p.kind!=='midi')for(const e of song.events)if(e.orig)e.orig=false;
+  const keys=[...new Set(song.events.map(rollKeyOf))],col=k=>ROLLC[(typeof k==='number'?k:keys.indexOf(k))%ROLLC.length];
+  $('rollLegend').innerHTML=keys.map(k=>`<button class="chip${rollHidden.has(String(k))?' off':''}" data-k="${esc(String(k))}"><i style="background:${col(k)}"></i>${esc(rollName(p,k))}</button>`).join('');
+  const ev=song.events.filter(e=>!rollHidden.has(String(rollKeyOf(e)))),pitched=ev.filter(e=>e.midi!=null),hits=ev.filter(e=>e.midi==null);
+  const pitch=e=>e.midi+12*(e.fx||0);let lo=Math.min(...pitched.map(pitch)),hi=Math.max(...pitched.map(pitch));if(!pitched.length){lo=48;hi=72}lo-=1;hi+=1;
+  const drumRows=['kick','snare','hat'].filter(t=>hits.some(e=>e.type===t)),rows=hi-lo+1,rowH=Math.max(5,Math.min(13,Math.floor(440/rows))),rulerH=18,laneH=14;
+  const pps=+$('rollZoom').value,W=Math.ceil((song.total+1)*pps),H=rulerH+rows*rowH+drumRows.length*laneH+(drumRows.length?6:0);
+  const dpr=Math.min(devicePixelRatio||1,32000/W,2),cv=$('rollCv'),kc=$('rollKeys');
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';kc.width=58*dpr;kc.height=H*dpr;kc.style.height=H+'px';$('rollInner').style.width=W+'px';
+  const g=cv.getContext('2d'),k=kc.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);k.setTransform(dpr,0,0,dpr,0,0);
+  const yOf=m=>rulerH+(hi-m)*rowH,black=m=>[1,3,6,8,10].includes(((m%12)+12)%12);
+  g.fillStyle='#1e252c';g.fillRect(0,0,W,H);
+  for(let m=lo;m<=hi;m++){g.fillStyle=black(m)?'#232b33':'#2a333c';g.fillRect(0,yOf(m),W,rowH-1)}
+  const barS=song.spb*(p.beatsPerBar||4);
+  for(let b=0,x;(x=b*barS*pps)<W;b++){g.fillStyle='#3a4552';g.fillRect(x,rulerH,1,H-rulerH);g.fillStyle='#9fb0bf';g.font='11px system-ui';if(b%(pps<45?4:1)===0)g.fillText(String(b+1),x+3,13)}
+  const how=new Map(),status=e=>{if(e.orig||e.type==='organ')return'stand';const id=sid(e.type,e.midi);if(!how.has(id)){const r=resolve(e.type,e.midi,S.shift);how.set(id,r.how==='exact'||r.how==='alt'?'mine':r.how==='shift'?'borrow':S.fill?'stand':'skip')}return how.get(id)};
+  rollGeom={pps,rects:[],plan:p};
+  for(const e of pitched){const x=e.start*pps,w=Math.max(2,e.dur*pps-1),y=yOf(pitch(e))+1,hh=rowH-3,c=col(rollKeyOf(e)),st=status(e);
+    if(st==='mine'){g.fillStyle=c;g.fillRect(x,y,w,hh)}else if(st==='borrow'){g.fillStyle=c;g.globalAlpha=0.55;g.fillRect(x,y,w,hh);g.globalAlpha=1;g.strokeStyle='#e0a100';g.lineWidth=1.5;g.strokeRect(x+0.75,y+0.75,w-1.5,hh-1.5)}
+    else{g.strokeStyle=c;g.globalAlpha=st==='skip'?0.3:0.9;g.lineWidth=1.2;g.strokeRect(x+0.6,y+0.6,w-1.2,hh-1.2);g.globalAlpha=1}
+    rollGeom.rects.push({x,y,w,h:hh,e,st})}
+  const dTop=rulerH+rows*rowH+6;drumRows.forEach((t,i)=>{g.fillStyle=i%2?'#232b33':'#283039';g.fillRect(0,dTop+i*laneH,W,laneH-1)});
+  for(const e of hits){const i=drumRows.indexOf(e.type);if(i<0)continue;const x=e.start*pps,y=dTop+i*laneH+2,st=e.stand?'stand':status(e),c=col(rollKeyOf(e));
+    if(st==='mine'){g.fillStyle=c;g.fillRect(x,y,3,laneH-5)}else{g.strokeStyle=c;g.strokeRect(x+0.5,y+0.5,3,laneH-6)}rollGeom.rects.push({x:x-1,y,w:5,h:laneH-5,e,st})}
+  k.fillStyle='#1e252c';k.fillRect(0,0,58,H);
+  for(let m=lo;m<=hi;m++){const y=yOf(m);k.fillStyle=black(m)?'#111':'#e9edf0';k.fillRect(0,y,black(m)?36:58,rowH-1);
+    if(rowH>=8&&(m%12===0||rowH>=11)){k.fillStyle=black(m)?'#ddd':'#222';k.font=`${Math.min(10,rowH-1)}px system-ui`;k.fillText(nName(m),black(m)?3:24,y+rowH-2)}}
+  k.fillStyle='#9fb0bf';k.font='11px system-ui';drumRows.forEach((t,i)=>k.fillText(KITNAME[t],4,dTop+i*laneH+11));
+  $('rollHead').style.height=H+'px';
+}
+$('rollLegend').addEventListener('click',e=>{const b=e.target.closest('.chip');if(!b)return;const k=b.dataset.k;rollHidden.has(k)?rollHidden.delete(k):rollHidden.add(k);drawRoll()});
+$('rollMode').onchange=drawRoll;$('rollZoom').oninput=drawRoll;
+$('rollCv').addEventListener('click',ev=>{if(!rollGeom)return;const r=$('rollCv').getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;
+  const hit=rollGeom.rects.find(q=>x>=q.x&&x<=q.x+q.w&&y>=q.y&&y<=q.y+q.h);if(!hit){$('rollInfo').textContent='Solid = your recording · gold outline = borrowed from a nearby note · hollow = stand-in sound.';return}
+  const e=hit.e,p=rollGeom.plan,name=rollName(p,rollKeyOf(e)),t=fmt(e.start)+'.'+String(Math.floor((e.start%1)*10));
+  let src={mine:'your recording',borrow:'borrowed from a nearby note of yours',stand:'a stand-in sound',skip:'nothing (missing, skipped)'}[hit.st];
+  if(hit.st==='mine'&&e.midi!=null){const r=resolve(e.type,e.midi,S.shift);if(r.how==='alt')src=`your “${e.type==='ooh'?'dum':'ooh'}” on the same note`}
+  const note=e.midi==null?KITNAME[e.type]:nName(e.midi)+(e.fx?` (pitched up to ${nName(e.midi+12*e.fx)})`:'')+(e.midi!=null&&!e.orig?` · your “${e.type==='organ'?'stand-in':e.type}”`:'');
+  $('rollInfo').textContent=`${name} · ${note} · at ${t} · plays ${src}`});
 
 // ---------- start ----------
 dbAll().then(all=>{for(const n of all)sounds[n.id]=n;renderSongs()});
